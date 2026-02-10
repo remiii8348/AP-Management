@@ -42,7 +42,6 @@ if check_password():
     conn = st.connection("gsheets", type=GSheetsConnection)
 
     def load_full_data():
-        # [기본] Sheet1 로드
         try:
             main_df = conn.read(worksheet="Sheet1", ttl=0)
         except:
@@ -56,7 +55,6 @@ if check_password():
         main_df = main_df.dropna(subset=['Date'])
         main_df['Amount_KRW'] = pd.to_numeric(main_df['Amount_KRW'], errors='coerce').fillna(0).astype(int)
         
-        # 메모장 로드
         try:
             notes_df = conn.read(worksheet="special_notes", ttl=0)
         except:
@@ -99,7 +97,7 @@ if check_password():
                 ws.column_dimensions[col[0].column_letter].width = 20
         return output.getvalue()
 
-    # 실행
+    # 앱 실행
     df, notes_df = load_full_data()
     
     if not df.empty or (df.empty and notes_df.empty):
@@ -152,23 +150,19 @@ if check_password():
 
             st.divider()
 
-            # 조회 (검색 기능 추가)
+            # 조회
             st.subheader("🔍 기간별 미지급 조회")
-            unpaid_only = df[df['Status'] == 'Wait']
-            oldest_d = pd.to_datetime(unpaid_only['Date']).min().date() if not unpaid_only.empty else datetime.now().date()
             
-            c1, c2, c3, c4 = st.columns([1.2, 1.2, 2, 1.5]) # 컬럼 비율 조정
-            with c1: start_d = st.date_input("시작", oldest_d)
+            c1, c2, c3, c4 = st.columns([1.2, 1.2, 2, 1.5])
+            # [수정] 시작 날짜를 무조건 '오늘'로 설정
+            with c1: start_d = st.date_input("시작", datetime.now().date())
             with c2: end_d = st.date_input("종료", datetime.now().date() + timedelta(days=14))
-            # [추가] 텍스트 검색창
             with c3: 
                 search_text = st.text_input("거래처 검색 (일부만 입력)", placeholder="엔터키를 누르면 검색됩니다")
             
-            # 필터 로직
             mask = (df['Date'].dt.date >= start_d) & (df['Date'].dt.date <= end_d) & (df['Status'] == 'Wait')
             view_df = df.loc[mask].sort_values('Date')
             
-            # 검색어가 있으면 추가 필터링 (대소문자 구분 없음)
             if search_text:
                 view_df = view_df[view_df['Vendor'].str.contains(search_text, case=False, na=False)]
 
@@ -205,7 +199,6 @@ if check_password():
             s_col1, s_col2 = st.columns(2)
             with s_col1: 
                 search_cat = st.radio("상태 필터", ["미지급(Wait)", "지급완료(Done)", "전체"], horizontal=True)
-            # [수정] 텍스트 검색창으로 교체
             with s_col2: 
                 history_search = st.text_input("거래처명 검색 (일부만 입력해도 됨)", placeholder="찾고 싶은 거래처명을 입력하세요")
             
@@ -213,7 +206,6 @@ if check_password():
             if search_cat == "미지급(Wait)": h_df = h_df[h_df['Status'] == 'Wait']
             elif search_cat == "지급완료(Done)": h_df = h_df[h_df['Status'] == 'Done']
             
-            # [수정] 검색어가 있을 때만 필터링
             if history_search:
                 h_df = h_df[h_df['Vendor'].str.contains(history_search, case=False, na=False)]
             
@@ -221,7 +213,10 @@ if check_password():
             
             if not h_df.empty:
                 st.download_button(f"📥 엑셀 내보내기", data=convert_to_excel(h_df), file_name=f"History_Search.xlsx")
-                edited = st.data_editor(h_df.sort_values('Date', ascending=False), use_container_width=True, hide_index=True)
+                
+                # [수정] 날짜 오래된 순(ascending=True)으로 정렬
+                edited = st.data_editor(h_df.sort_values('Date', ascending=True), use_container_width=True, hide_index=True)
+                
                 if st.button("💾 위 수정사항 구글 시트에 최종 저장"):
                     edited['Amount_KRW'] = (edited['Amount_F'] * edited['Ex_Rate']).astype(int)
                     df.update(edited)
