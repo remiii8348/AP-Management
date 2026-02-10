@@ -16,7 +16,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- [2] 보안 로그인 함수 ---
+# --- [2] 보안 로그인 ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
@@ -41,31 +41,28 @@ def check_password():
 if check_password():
     conn = st.connection("gsheets", type=GSheetsConnection)
 
-    # 데이터 로드 함수
     def load_full_data():
-        # [수정] 기본 시트 이름을 'Sheet1'으로 변경 (구글 기본값)
+        # [기본] Sheet1 로드
         try:
             main_df = conn.read(worksheet="Sheet1", ttl=0)
         except:
-            # 혹시 한글 '시트1'일 경우 대비
             try:
                 main_df = conn.read(worksheet="시트1", ttl=0)
             except:
-                st.error("🚨 구글 시트의 첫 번째 탭 이름을 'Sheet1'으로 바꿔주세요!")
+                st.error("🚨 구글 시트 탭 이름을 'Sheet1'으로 확인해주세요.")
                 return pd.DataFrame(), pd.DataFrame()
 
         main_df['Date'] = pd.to_datetime(main_df['Date'], errors='coerce')
         main_df = main_df.dropna(subset=['Date'])
         main_df['Amount_KRW'] = pd.to_numeric(main_df['Amount_KRW'], errors='coerce').fillna(0).astype(int)
         
-        # 메모장 데이터
+        # 메모장 로드
         try:
             notes_df = conn.read(worksheet="special_notes", ttl=0)
         except:
             notes_df = pd.DataFrame(columns=['Content'])
         return main_df, notes_df
 
-    # 엑셀 변환 함수
     def convert_to_excel(df_export):
         output = io.BytesIO()
         exp = df_export[['Date', 'Vendor', 'Amount_KRW']].copy()
@@ -75,7 +72,6 @@ if check_password():
             exp.to_excel(writer, index=False, sheet_name='미지급목록')
             ws = writer.sheets['미지급목록']
             
-            # 스타일 설정
             thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
             header_fill = PatternFill(start_color="D9EAD3", fill_type="solid")
             sum_fill = PatternFill(start_color="FFF2CC", fill_type="solid")
@@ -103,17 +99,16 @@ if check_password():
                 ws.column_dimensions[col[0].column_letter].width = 20
         return output.getvalue()
 
-    # 앱 실행 시작
+    # 실행
     df, notes_df = load_full_data()
     
-    if not df.empty or (df.empty and notes_df.empty): # 데이터 로드 성공 시에만 실행
+    if not df.empty or (df.empty and notes_df.empty):
         st.title("💸 미지급금 통합 관리 시스템")
         
         tab1, tab2 = st.tabs(["📋 미지급 관리 & 메모", "🔍 히스토리 조회 & 수정"])
 
-        # --- 탭 1: 입력 및 메모 ---
+        # --- Tab 1 ---
         with tab1:
-            # 1. 신규 입력 폼
             with st.form("in_form", clear_on_submit=True):
                 st.subheader("📝 신규 내역 입력")
                 f1, f2, f3, f4, f5, f6 = st.columns([1, 2, 0.8, 1.2, 1, 1])
@@ -122,9 +117,7 @@ if check_password():
                 with f3: in_curr = st.selectbox("통화", ["KRW", "USD", "AUD"])
                 with f4: in_amt = st.number_input("금액", min_value=0.0)
                 with f5: in_rate = st.number_input("환율", min_value=1.0, value=1350.0 if in_curr == "USD" else 1.0)
-                with f6: 
-                    st.write("")
-                    in_fixed = st.checkbox("고정지출(1년)")
+                with f6: st.write(""); in_fixed = st.checkbox("고정지출(1년)")
                 
                 if st.form_submit_button("➕ 추가", use_container_width=True):
                     if in_vendor:
@@ -132,138 +125,105 @@ if check_password():
                         new_rows = []
                         for i in range(count):
                             d = pd.to_datetime(in_date) + pd.DateOffset(months=i)
-                            new_rows.append({
-                                'Date': d, 'Vendor': in_vendor, 'Currency': in_curr, 
-                                'Amount_F': in_amt, 'Ex_Rate': in_rate, 
-                                'Amount_KRW': int(in_amt*in_rate), 'Status': 'Wait', 'Is_Fixed': in_fixed
-                            })
+                            new_rows.append({'Date': d, 'Vendor': in_vendor, 'Currency': in_curr, 'Amount_F': in_amt, 'Ex_Rate': in_rate, 'Amount_KRW': int(in_amt*in_rate), 'Status': 'Wait', 'Is_Fixed': in_fixed})
                         df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-                        # [수정] 저장 시에도 Sheet1 사용
                         conn.update(worksheet="Sheet1", data=df)
                         st.rerun()
 
             st.divider()
             
-            # 2. 메모장
-            st.subheader("📌 특이사항 메모 (체크리스트)")
+            # 메모장
+            st.subheader("📌 특이사항 메모")
             n1, n2 = st.columns([6, 1])
-            with n1: 
-                note_txt = st.text_input("업무 특이사항 입력", placeholder="예: 체리 파손 건 보험 청구 확인 필요")
+            with n1: note_txt = st.text_input("메모 입력", placeholder="예: 체리 파손 건 확인 필요")
             with n2: 
-                st.write("") 
-                if st.button("메모 추가", use_container_width=True):
+                st.write("")
+                if st.button("추가", use_container_width=True):
                     if note_txt:
                         notes_df = pd.concat([notes_df, pd.DataFrame([{'Content': note_txt}])], ignore_index=True)
-                        conn.update(worksheet="special_notes", data=notes_df)
-                        st.rerun()
-            
+                        conn.update(worksheet="special_notes", data=notes_df); st.rerun()
             if not notes_df.empty:
                 for idx, row in notes_df.iterrows():
                     nc1, nc2 = st.columns([6, 1])
                     nc1.info(row['Content'])
                     if nc2.button("완료", key=f"nt_{idx}"):
                         notes_df = notes_df.drop(idx)
-                        conn.update(worksheet="special_notes", data=notes_df)
-                        st.rerun()
+                        conn.update(worksheet="special_notes", data=notes_df); st.rerun()
 
             st.divider()
 
-            # 3. 미지급 조회 및 엑셀 다운로드
+            # 조회 (검색 기능 추가)
             st.subheader("🔍 기간별 미지급 조회")
             unpaid_only = df[df['Status'] == 'Wait']
             oldest_d = pd.to_datetime(unpaid_only['Date']).min().date() if not unpaid_only.empty else datetime.now().date()
             
-            c1, c2, c3 = st.columns([1.5, 1.5, 2])
-            with c1: start_d = st.date_input("조회 시작", oldest_d)
-            with c2: end_d = st.date_input("조회 종료", datetime.now().date() + timedelta(days=14))
-            
-            view_df = df[
-                (df['Date'].dt.date >= start_d) & 
-                (df['Date'].dt.date <= end_d) & 
-                (df['Status'] == 'Wait')
-            ].sort_values('Date')
-            
+            c1, c2, c3, c4 = st.columns([1.2, 1.2, 2, 1.5]) # 컬럼 비율 조정
+            with c1: start_d = st.date_input("시작", oldest_d)
+            with c2: end_d = st.date_input("종료", datetime.now().date() + timedelta(days=14))
+            # [추가] 텍스트 검색창
             with c3: 
+                search_text = st.text_input("거래처 검색 (일부만 입력)", placeholder="엔터키를 누르면 검색됩니다")
+            
+            # 필터 로직
+            mask = (df['Date'].dt.date >= start_d) & (df['Date'].dt.date <= end_d) & (df['Status'] == 'Wait')
+            view_df = df.loc[mask].sort_values('Date')
+            
+            # 검색어가 있으면 추가 필터링 (대소문자 구분 없음)
+            if search_text:
+                view_df = view_df[view_df['Vendor'].str.contains(search_text, case=False, na=False)]
+
+            with c4: 
                 st.write("") 
                 if not view_df.empty:
-                    st.download_button(
-                        "📥 현재 조회내역 엑셀 다운로드", 
-                        data=convert_to_excel(view_df), 
-                        file_name=f"AP_Report_{datetime.now().strftime('%m%d')}.xlsx", 
-                        use_container_width=True
-                    )
+                    st.download_button("📥 엑셀 다운로드", data=convert_to_excel(view_df), file_name=f"AP_Report_{datetime.now().strftime('%m%d')}.xlsx", use_container_width=True)
 
             if not view_df.empty:
                 v0, v1, v2, v3, v4 = st.columns([0.5, 1.2, 2.5, 4, 1])
                 v0.write("**삭제**"); v1.write("**날짜**"); v2.write("**거래처**"); v3.write("**금액**"); v4.write("**완료**")
-                
                 today = datetime.now().date()
                 for idx, row in view_df.iterrows():
                     r0, r1, r2, r3, r4 = st.columns([0.5, 1.2, 2.5, 4, 1])
                     if r0.button("🗑️", key=f"d_{idx}"):
-                        df = df.drop(idx)
-                        # [수정] Sheet1 사용
-                        conn.update(worksheet="Sheet1", data=df)
-                        st.rerun()
-                    
+                        df = df.drop(idx); conn.update(worksheet="Sheet1", data=df); st.rerun()
                     d_val = row['Date'].date()
                     d_str = d_val.strftime('%Y-%m-%d')
                     if d_val == today: r1.write(f":green-background[**{d_str}**]")
                     elif d_val < today: r1.write(f":red[**{d_str}**]")
                     else: r1.write(f"**{d_str}**")
-                    
                     r2.write(f"**{row['Vendor']}**")
-                    
-                    amt_str = f"**{int(row['Amount_KRW']):,} 원**"
-                    if row['Currency'] != 'KRW':
-                        amt_str += f" ({row['Amount_F']:,.1f}{row['Currency']})"
-                    r3.write(amt_str)
-                    
+                    r3.write(f"**{int(row['Amount_KRW']):,} 원**" + (f" ({row['Amount_F']:,.1f}{row['Currency']})" if row['Currency']!='KRW' else ""))
                     if r4.button("✅", key=f"p_{idx}"):
-                        df.at[idx, 'Status'] = 'Done'
-                        # [수정] Sheet1 사용
-                        conn.update(worksheet="Sheet1", data=df)
-                        st.rerun()
-                
+                        df.at[idx, 'Status'] = 'Done'; conn.update(worksheet="Sheet1", data=df); st.rerun()
                 st.divider()
                 _, s2, s3 = st.columns([3, 1, 3])
                 s2.write("### 합계")
                 s3.write(f"### :blue[{int(view_df['Amount_KRW'].sum()):,} 원]")
 
-        # --- 탭 2: 히스토리 ---
+        # --- Tab 2 ---
         with tab2:
             st.subheader("🔎 히스토리 필터 및 상세 수정")
             s_col1, s_col2 = st.columns(2)
             with s_col1: 
                 search_cat = st.radio("상태 필터", ["미지급(Wait)", "지급완료(Done)", "전체"], horizontal=True)
+            # [수정] 텍스트 검색창으로 교체
             with s_col2: 
-                v_list = ["전체"] + sorted(df['Vendor'].unique().tolist())
-                search_v = st.selectbox("거래처별 조회", v_list)
+                history_search = st.text_input("거래처명 검색 (일부만 입력해도 됨)", placeholder="찾고 싶은 거래처명을 입력하세요")
             
             h_df = df.copy()
             if search_cat == "미지급(Wait)": h_df = h_df[h_df['Status'] == 'Wait']
             elif search_cat == "지급완료(Done)": h_df = h_df[h_df['Status'] == 'Done']
-            if search_v != "전체": h_df = h_df[h_df['Vendor'] == search_v]
+            
+            # [수정] 검색어가 있을 때만 필터링
+            if history_search:
+                h_df = h_df[h_df['Vendor'].str.contains(history_search, case=False, na=False)]
             
             st.write(f"📊 검색 결과: {len(h_df)}건")
             
             if not h_df.empty:
-                st.download_button(
-                    f"📥 {search_v} 필터 결과 엑셀 내보내기", 
-                    data=convert_to_excel(h_df), 
-                    file_name=f"History_{search_v}.xlsx"
-                )
-                
-                edited = st.data_editor(
-                    h_df.sort_values('Date', ascending=False), 
-                    use_container_width=True, 
-                    hide_index=True
-                )
-                
+                st.download_button(f"📥 엑셀 내보내기", data=convert_to_excel(h_df), file_name=f"History_Search.xlsx")
+                edited = st.data_editor(h_df.sort_values('Date', ascending=False), use_container_width=True, hide_index=True)
                 if st.button("💾 위 수정사항 구글 시트에 최종 저장"):
                     edited['Amount_KRW'] = (edited['Amount_F'] * edited['Ex_Rate']).astype(int)
                     df.update(edited)
-                    # [수정] Sheet1 사용
                     conn.update(worksheet="Sheet1", data=df)
-                    st.success("데이터가 안전하게 저장되었습니다!")
-                    st.rerun()
+                    st.success("저장 완료!"); st.rerun()
