@@ -105,18 +105,18 @@ if check_password():
             with f4: in_amt = st.number_input("금액", min_value=0.0)
             
             with f5:
-                # [핵심 수정] key를 부여하여 통화 변경 시 위젯 상태를 강제 리셋함
-                # KRW면 1.0 고정 및 비활성화, 외화면 활성화
-                is_krw = (in_curr == "KRW")
-                default_rate = 1.0 if is_krw else (1350.0 if in_curr == "USD" else 940.0)
+                # [수정] 통화 변경 시 기본 가이드는 주되, 'disabled=False'로 무조건 입력 가능하게 설정
+                default_rate = 1.0
+                if in_curr == "USD": default_rate = 1350.0
+                elif in_curr == "AUD": default_rate = 940.0
                 
                 in_rate = st.number_input(
                     "환율", 
-                    min_value=1.0, 
+                    min_value=0.0, # 0원부터 입력 가능
                     value=float(default_rate), 
-                    disabled=is_krw,
+                    disabled=False, # 무조건 활성화
                     format="%.1f",
-                    key=f"rate_input_{in_curr}" # 이 key 덕분에 통화 바꾸면 즉시 풀림
+                    key=f"rate_input_{in_curr}" # 통화 변경 시 각 통화별 기본값으로 리셋됨
                 )
             
             with f6: st.write(""); in_fixed = st.checkbox("고정지출(1년)")
@@ -125,7 +125,7 @@ if check_password():
                 if in_vendor:
                     count = 12 if in_fixed else 1
                     new_rows = []
-                    # 계산 공식: KRW = 외화 * 입력한 환율
+                    # 계산 공식: KRW = 외화금액 * 사용자가 방금 입력한 환율
                     calculated_krw = int(in_amt * in_rate)
                     
                     for i in range(count):
@@ -138,11 +138,10 @@ if check_password():
                         })
                     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
                     conn.update(worksheet="Sheet1", data=df)
-                    st.success(f"저장 성공! {in_curr} 환율 {in_rate} 적용됨.")
+                    st.success(f"저장 성공! 적용 환율: {in_rate}")
                     st.rerun()
 
         st.divider()
-        # [메모/조회/히스토리 로직은 이전과 동일하게 유지]
         st.subheader("📌 특이사항 메모")
         n1, n2 = st.columns([6, 1])
         with n1: note_txt = st.text_input("메모 입력", placeholder="예: 체리 파손 건 확인 필요", key="note_input")
