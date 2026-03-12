@@ -105,46 +105,47 @@ if check_password():
             with f4: in_amt = st.number_input("금액", min_value=0.0)
             
             with f5:
-                # [수정] 통화 변경 시 기본 가이드는 주되, 'disabled=False'로 무조건 입력 가능하게 설정
-                default_rate = 1.0
-                if in_curr == "USD": default_rate = 1350.0
-                elif in_curr == "AUD": default_rate = 940.0
+                # 통화별 추천 기본값만 설정 (하지만 수정은 언제든 가능하게!)
+                if in_curr == "USD": d_rate = 1350.0
+                elif in_curr == "AUD": d_rate = 940.0
+                else: d_rate = 1.0
                 
+                # [핵심] key를 단순화하고 disabled=False로 무조건 활성화
                 in_rate = st.number_input(
-                    "환율", 
-                    min_value=0.0, # 0원부터 입력 가능
-                    value=float(default_rate), 
-                    disabled=False, # 무조건 활성화
+                    "환율 (직접 수정 가능)", 
+                    min_value=0.0, 
+                    value=float(d_rate),
                     format="%.1f",
-                    key=f"rate_input_{in_curr}" # 통화 변경 시 각 통화별 기본값으로 리셋됨
+                    key="exchange_rate_widget"
                 )
             
             with f6: st.write(""); in_fixed = st.checkbox("고정지출(1년)")
             
             if st.form_submit_button("➕ 추가", use_container_width=True):
                 if in_vendor:
+                    # [여기서 다시 확인] 사용자가 입력한 in_rate를 그대로 가져와서 정수형 KRW 계산
+                    final_krw = int(round(in_amt * in_rate, 0))
+                    
                     count = 12 if in_fixed else 1
                     new_rows = []
-                    # 계산 공식: KRW = 외화금액 * 사용자가 방금 입력한 환율
-                    calculated_krw = int(in_amt * in_rate)
-                    
                     for i in range(count):
                         d = pd.to_datetime(in_date) + pd.DateOffset(months=i)
                         new_rows.append({
                             'Date': d, 'Vendor': in_vendor, 'Currency': in_curr, 
                             'Amount_F': in_amt, 'Ex_Rate': in_rate, 
-                            'Amount_KRW': calculated_krw, 
+                            'Amount_KRW': final_krw, 
                             'Status': 'Wait', 'Is_Fixed': in_fixed
                         })
                     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
                     conn.update(worksheet="Sheet1", data=df)
-                    st.success(f"저장 성공! 적용 환율: {in_rate}")
+                    st.success(f"입력 성공! {final_krw:,}원 (환율 {in_rate} 적용)")
                     st.rerun()
 
         st.divider()
+        # --- 메모/조회/히스토리 부분 ---
         st.subheader("📌 특이사항 메모")
         n1, n2 = st.columns([6, 1])
-        with n1: note_txt = st.text_input("메모 입력", placeholder="예: 체리 파손 건 확인 필요", key="note_input")
+        with n1: note_txt = st.text_input("메모 입력", placeholder="예: 파손 건 확인 필요", key="note_input")
         with n2: 
             st.write("")
             if st.button("추가", key="add_note", use_container_width=True):
@@ -167,15 +168,13 @@ if check_password():
         with c2: end_d = st.date_input("종료", datetime.now().date() + timedelta(days=14))
         
         all_vendors = sorted(df['Vendor'].unique().tolist()) if 'Vendor' in df.columns and not df.empty else []
-        with c3: 
-            selected_vendors = st.multiselect("거래처 다중 선택 (비워두면 전체 조회)", options=all_vendors, placeholder="거래처를 선택하세요", key="main_multi")
+        with c3: selected_vendors = st.multiselect("거래처 다중 선택", options=all_vendors, placeholder="거래처를 선택하세요", key="main_multi")
         
         view_df = pd.DataFrame()
         if 'Date' in df.columns and not df.empty:
             mask = (df['Date'].dt.date >= start_d) & (df['Date'].dt.date <= end_d) & (df['Status'] == 'Wait')
             view_df = df.loc[mask].sort_values('Date')
-            if selected_vendors:
-                view_df = view_df[view_df['Vendor'].isin(selected_vendors)]
+            if selected_vendors: view_df = view_df[view_df['Vendor'].isin(selected_vendors)]
 
         with c4: 
             st.write("") 
@@ -204,16 +203,12 @@ if check_password():
             _, s2, s3 = st.columns([3, 1, 3])
             s2.write("### 합계")
             s3.write(f"### :blue[{int(view_df['Amount_KRW'].sum()):,} 원]")
-        else:
-            st.info("조회된 내역이 없습니다.")
 
     with tab2:
         st.subheader("🔎 히스토리 필터 및 상세 수정")
         s_col1, s_col2 = st.columns(2)
-        with s_col1: 
-            search_cat = st.radio("상태 필터", ["미지급(Wait)", "지급완료(Done)", "전체"], horizontal=True)
-        with s_col2: 
-            h_vendors = st.multiselect("거래처 필터 (히스토리)", options=all_vendors, key="hist_multi")
+        with s_col1: search_cat = st.radio("상태 필터", ["미지급(Wait)", "지급완료(Done)", "전체"], horizontal=True)
+        with s_col2: h_vendors = st.multiselect("거래처 필터 (히스토리)", options=all_vendors, key="hist_multi")
         
         h_df = df.copy()
         if not h_df.empty:
@@ -229,6 +224,7 @@ if check_password():
                 edited = st.data_editor(h_df.sort_values('Date', ascending=True), use_container_width=True, hide_index=True)
                 
                 if st.button("💾 위 수정사항 구글 시트에 최종 저장"):
+                    # 수정 시에도 외화 * 환율로 자동 재계산
                     edited['Amount_KRW'] = (edited['Amount_F'] * edited['Ex_Rate']).round(0).astype(int)
                     df.update(edited)
                     conn.update(worksheet="Sheet1", data=df)
