@@ -105,13 +105,19 @@ if check_password():
             with f4: in_amt = st.number_input("금액", min_value=0.0)
             
             with f5:
-                # [수정] 통화에 따라 환율 입력 방식을 다르게 설정
-                if in_curr == "KRW":
-                    in_rate = 1.0
-                    st.text_input("환율", value="1.0 (고정)", disabled=True)
-                else:
-                    default_rate = 1350.0 if in_curr == "USD" else 900.0
-                    in_rate = st.number_input("환율", min_value=1.0, value=default_rate, step=0.1, format="%.1f")
+                # [핵심 수정] key를 부여하여 통화 변경 시 위젯 상태를 강제 리셋함
+                # KRW면 1.0 고정 및 비활성화, 외화면 활성화
+                is_krw = (in_curr == "KRW")
+                default_rate = 1.0 if is_krw else (1350.0 if in_curr == "USD" else 940.0)
+                
+                in_rate = st.number_input(
+                    "환율", 
+                    min_value=1.0, 
+                    value=float(default_rate), 
+                    disabled=is_krw,
+                    format="%.1f",
+                    key=f"rate_input_{in_curr}" # 이 key 덕분에 통화 바꾸면 즉시 풀림
+                )
             
             with f6: st.write(""); in_fixed = st.checkbox("고정지출(1년)")
             
@@ -119,8 +125,9 @@ if check_password():
                 if in_vendor:
                     count = 12 if in_fixed else 1
                     new_rows = []
-                    # [중요] 계산 시 입력받은 in_rate를 직접 사용
+                    # 계산 공식: KRW = 외화 * 입력한 환율
                     calculated_krw = int(in_amt * in_rate)
+                    
                     for i in range(count):
                         d = pd.to_datetime(in_date) + pd.DateOffset(months=i)
                         new_rows.append({
@@ -131,10 +138,11 @@ if check_password():
                         })
                     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
                     conn.update(worksheet="Sheet1", data=df)
-                    st.success(f"입력 완료! (적용 환율: {in_rate})")
+                    st.success(f"저장 성공! {in_curr} 환율 {in_rate} 적용됨.")
                     st.rerun()
 
         st.divider()
+        # [메모/조회/히스토리 로직은 이전과 동일하게 유지]
         st.subheader("📌 특이사항 메모")
         n1, n2 = st.columns([6, 1])
         with n1: note_txt = st.text_input("메모 입력", placeholder="예: 체리 파손 건 확인 필요", key="note_input")
@@ -161,7 +169,7 @@ if check_password():
         
         all_vendors = sorted(df['Vendor'].unique().tolist()) if 'Vendor' in df.columns and not df.empty else []
         with c3: 
-            selected_vendors = st.multiselect("거래처 다중 선택 (비워두면 전체 조회)", options=all_vendors, placeholder="거래처를 선택하세요")
+            selected_vendors = st.multiselect("거래처 다중 선택 (비워두면 전체 조회)", options=all_vendors, placeholder="거래처를 선택하세요", key="main_multi")
         
         view_df = pd.DataFrame()
         if 'Date' in df.columns and not df.empty:
@@ -219,14 +227,10 @@ if check_password():
                 xl_hist = convert_to_excel(h_df)
                 if xl_hist: st.download_button(f"📥 엑셀 내보내기", data=xl_hist, file_name=f"History_Search.xlsx", key="hist_xl")
                 
-                # 데이터 에디터 (여기서 수정 시 환율/금액 연동)
                 edited = st.data_editor(h_df.sort_values('Date', ascending=True), use_container_width=True, hide_index=True)
                 
                 if st.button("💾 위 수정사항 구글 시트에 최종 저장"):
-                    # [수정] 수정된 표에서도 금액 = 외화 * 환율로 재계산하여 저장
                     edited['Amount_KRW'] = (edited['Amount_F'] * edited['Ex_Rate']).round(0).astype(int)
                     df.update(edited)
                     conn.update(worksheet="Sheet1", data=df)
                     st.success("저장 완료!"); st.rerun()
-        else:
-            st.write("데이터가 없습니다.")
