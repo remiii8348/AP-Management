@@ -42,30 +42,25 @@ if check_password():
     conn = st.connection("gsheets", type=GSheetsConnection)
 
     def load_full_data():
-        # 기본 컬럼 구조 정의
         cols = ['Date', 'Vendor', 'Currency', 'Amount_F', 'Ex_Rate', 'Amount_KRW', 'Status', 'Is_Fixed']
         try:
-            # Sheet1 또는 시트1 읽기 시도
             try:
                 main_df = conn.read(worksheet="Sheet1", ttl=0)
             except:
                 main_df = conn.read(worksheet="시트1", ttl=0)
             
-            # 데이터가 비어있거나 컬럼이 없는 경우 대비
             if main_df.empty or 'Vendor' not in main_df.columns:
                 main_df = pd.DataFrame(columns=cols)
             else:
                 main_df['Date'] = pd.to_datetime(main_df['Date'], errors='coerce')
                 main_df = main_df.dropna(subset=['Date'])
                 main_df['Amount_KRW'] = pd.to_numeric(main_df['Amount_KRW'], errors='coerce').fillna(0).astype(int)
-        except Exception as e:
-            st.warning("데이터를 불러오는 중 문제가 발생했습니다. (시트가 비어있을 수 있음)")
+        except Exception:
             main_df = pd.DataFrame(columns=cols)
         
         try:
             notes_df = conn.read(worksheet="special_notes", ttl=0)
-            if 'Content' not in notes_df.columns:
-                notes_df = pd.DataFrame(columns=['Content'])
+            if 'Content' not in notes_df.columns: notes_df = pd.DataFrame(columns=['Content'])
         except:
             notes_df = pd.DataFrame(columns=['Content'])
             
@@ -76,18 +71,15 @@ if check_password():
         output = io.BytesIO()
         exp = df_export[['Date', 'Vendor', 'Amount_KRW']].copy()
         exp['Date'] = exp['Date'].dt.strftime('%Y-%m-%d')
-        
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             exp.to_excel(writer, index=False, sheet_name='미지급목록')
             ws = writer.sheets['미지급목록']
-            # ... (스타일링 코드는 동일)
             thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
             header_fill = PatternFill(start_color="D9EAD3", fill_type="solid")
             sum_fill = PatternFill(start_color="FFF2CC", fill_type="solid")
-            font_style = Font(name='맑은 고딕', size=10)
             for row in ws.iter_rows(min_row=1, max_row=len(exp)+1, min_col=1, max_col=3):
                 for cell in row:
-                    cell.font = font_style
+                    cell.font = Font(name='맑은 고딕', size=10)
                     cell.border = thin_border
                     cell.alignment = Alignment(horizontal='center', vertical='center')
                     if cell.row == 1: cell.fill = header_fill
@@ -100,12 +92,10 @@ if check_password():
         return output.getvalue()
 
     df, notes_df = load_full_data()
-    
     st.title("💸 미지급금 통합 관리 시스템")
     tab1, tab2 = st.tabs(["📋 미지급 관리 & 메모", "🔍 히스토리 조회 & 수정"])
 
     with tab1:
-        # [입력 폼 영역]
         with st.form("in_form", clear_on_submit=True):
             st.subheader("📝 신규 내역 입력")
             f1, f2, f3, f4, f5, f6 = st.columns([1, 2, 0.8, 1.2, 1, 1])
@@ -113,26 +103,41 @@ if check_password():
             with f2: in_vendor = st.text_input("거래처명")
             with f3: in_curr = st.selectbox("통화", ["KRW", "USD", "AUD"])
             with f4: in_amt = st.number_input("금액", min_value=0.0)
-            with f5: in_rate = st.number_input("환율", min_value=1.0, value=1350.0 if in_curr == "USD" else 1.0)
+            
+            with f5:
+                # [수정] 통화에 따라 환율 입력 방식을 다르게 설정
+                if in_curr == "KRW":
+                    in_rate = 1.0
+                    st.text_input("환율", value="1.0 (고정)", disabled=True)
+                else:
+                    default_rate = 1350.0 if in_curr == "USD" else 900.0
+                    in_rate = st.number_input("환율", min_value=1.0, value=default_rate, step=0.1, format="%.1f")
+            
             with f6: st.write(""); in_fixed = st.checkbox("고정지출(1년)")
             
             if st.form_submit_button("➕ 추가", use_container_width=True):
                 if in_vendor:
                     count = 12 if in_fixed else 1
                     new_rows = []
+                    # [중요] 계산 시 입력받은 in_rate를 직접 사용
+                    calculated_krw = int(in_amt * in_rate)
                     for i in range(count):
                         d = pd.to_datetime(in_date) + pd.DateOffset(months=i)
-                        new_rows.append({'Date': d, 'Vendor': in_vendor, 'Currency': in_curr, 'Amount_F': in_amt, 'Ex_Rate': in_rate, 'Amount_KRW': int(in_amt*in_rate), 'Status': 'Wait', 'Is_Fixed': in_fixed})
+                        new_rows.append({
+                            'Date': d, 'Vendor': in_vendor, 'Currency': in_curr, 
+                            'Amount_F': in_amt, 'Ex_Rate': in_rate, 
+                            'Amount_KRW': calculated_krw, 
+                            'Status': 'Wait', 'Is_Fixed': in_fixed
+                        })
                     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
                     conn.update(worksheet="Sheet1", data=df)
+                    st.success(f"입력 완료! (적용 환율: {in_rate})")
                     st.rerun()
 
         st.divider()
-        
-        # [메모장 영역]
         st.subheader("📌 특이사항 메모")
         n1, n2 = st.columns([6, 1])
-        with n1: note_txt = st.text_input("메모 입력", placeholder="예: 체리 파손 건 확인 필요")
+        with n1: note_txt = st.text_input("메모 입력", placeholder="예: 체리 파손 건 확인 필요", key="note_input")
         with n2: 
             st.write("")
             if st.button("추가", key="add_note", use_container_width=True):
@@ -149,22 +154,14 @@ if check_password():
                     conn.update(worksheet="special_notes", data=notes_df); st.rerun()
 
         st.divider()
-
-        # [조회 영역]
         st.subheader("🔍 기간별 미지급 조회")
         c1, c2, c3, c4 = st.columns([1.2, 1.2, 2, 1.5])
         with c1: start_d = st.date_input("시작", datetime.now().date())
         with c2: end_d = st.date_input("종료", datetime.now().date() + timedelta(days=14))
         
-        # 에러 방지용: 컬럼 존재 여부 확인 후 리스트 생성
         all_vendors = sorted(df['Vendor'].unique().tolist()) if 'Vendor' in df.columns and not df.empty else []
-        
         with c3: 
-            selected_vendors = st.multiselect(
-                "거래처 다중 선택 (비워두면 전체 조회)", 
-                options=all_vendors,
-                placeholder="거래처를 선택하세요"
-            )
+            selected_vendors = st.multiselect("거래처 다중 선택 (비워두면 전체 조회)", options=all_vendors, placeholder="거래처를 선택하세요")
         
         view_df = pd.DataFrame()
         if 'Date' in df.columns and not df.empty:
@@ -177,8 +174,7 @@ if check_password():
             st.write("") 
             if not view_df.empty:
                 xl_data = convert_to_excel(view_df)
-                if xl_data:
-                    st.download_button("📥 엑셀 다운로드", data=xl_data, file_name=f"AP_Report_{datetime.now().strftime('%m%d')}.xlsx", use_container_width=True)
+                if xl_data: st.download_button("📥 엑셀 다운로드", data=xl_data, file_name=f"AP_Report_{datetime.now().strftime('%m%d')}.xlsx", use_container_width=True)
 
         if not view_df.empty:
             v0, v1, v2, v3, v4 = st.columns([0.5, 1.2, 2.5, 4, 1])
@@ -216,20 +212,19 @@ if check_password():
         if not h_df.empty:
             if search_cat == "미지급(Wait)": h_df = h_df[h_df['Status'] == 'Wait']
             elif search_cat == "지급완료(Done)": h_df = h_df[h_df['Status'] == 'Done']
-            
-            if h_vendors:
-                h_df = h_df[h_df['Vendor'].isin(h_vendors)]
+            if h_vendors: h_df = h_df[h_df['Vendor'].isin(h_vendors)]
             
             st.write(f"📊 검색 결과: {len(h_df)}건")
-            
             if not h_df.empty:
                 xl_hist = convert_to_excel(h_df)
-                if xl_hist: st.download_button(f"📥 엑셀 내보내기", data=xl_hist, file_name=f"History_Search.xlsx")
+                if xl_hist: st.download_button(f"📥 엑셀 내보내기", data=xl_hist, file_name=f"History_Search.xlsx", key="hist_xl")
                 
+                # 데이터 에디터 (여기서 수정 시 환율/금액 연동)
                 edited = st.data_editor(h_df.sort_values('Date', ascending=True), use_container_width=True, hide_index=True)
                 
                 if st.button("💾 위 수정사항 구글 시트에 최종 저장"):
-                    edited['Amount_KRW'] = (edited['Amount_F'] * edited['Ex_Rate']).astype(int)
+                    # [수정] 수정된 표에서도 금액 = 외화 * 환율로 재계산하여 저장
+                    edited['Amount_KRW'] = (edited['Amount_F'] * edited['Ex_Rate']).round(0).astype(int)
                     df.update(edited)
                     conn.update(worksheet="Sheet1", data=df)
                     st.success("저장 완료!"); st.rerun()
