@@ -132,23 +132,21 @@ if check_password():
 
         # --- [다중 선택 테이블 구현] ---
         if not view_df.empty:
-            # 전체 선택 기능
             st.write("")
             col_sel_all, _ = st.columns([1, 10])
             select_all = col_sel_all.checkbox("전체 선택")
 
-            # 헤더
-            v0, v1, v2, v3, v4 = st.columns([0.6, 1.2, 2.5, 4, 0.6])
-            v0.write("**선택**"); v1.write("**날짜**"); v2.write("**거래처**"); v3.write("**금액**"); v4.write("**삭제**")
+            # 헤더 (삭제 버튼 제거하고 체크박스에 집중)
+            v0, v1, v2, v3 = st.columns([0.6, 1.2, 2.5, 4.6])
+            v0.write("**선택**"); v1.write("**날짜**"); v2.write("**거래처**"); v3.write("**금액**")
             
             selected_indices = []
             today = datetime.now().date()
 
             # 리스트 출력
             for idx, row in view_df.iterrows():
-                r0, r1, r2, r3, r4 = st.columns([0.6, 1.2, 2.5, 4, 0.6])
+                r0, r1, r2, r3 = st.columns([0.6, 1.2, 2.5, 4.6])
                 
-                # 체크박스 (전체 선택 상태 반영)
                 is_selected = r0.checkbox("", key=f"sel_{idx}", value=select_all)
                 if is_selected:
                     selected_indices.append(idx)
@@ -161,29 +159,36 @@ if check_password():
                 
                 r2.write(f"**{row['Vendor']}**")
                 r3.write(f"**{int(row['Amount_KRW']):,} 원**" + (f" ({row['Amount_F']:,.1f}{row['Currency']})" if row['Currency']!='KRW' else ""))
-                
-                if r4.button("🗑️", key=f"del_{idx}"):
-                    df = df.drop(idx); conn.update(worksheet="Sheet1", data=df); st.rerun()
 
             st.divider()
             
-            # 하단 합계 및 일괄 처리 버튼
-            s1, s2, s3 = st.columns([1.5, 1, 1.5])
-            with s1:
-                if st.button(f"🔥 선택 항목 ({len(selected_indices)}건) 일괄 완료 처리", use_container_width=True, type="primary"):
+            # --- [하단 일괄 처리 버튼들] ---
+            act1, act2, act3 = st.columns([2, 2, 3])
+            
+            with act1:
+                if st.button(f"✅ {len(selected_indices)}건 완료 처리", use_container_width=True, type="primary"):
                     if selected_indices:
                         df.loc[selected_indices, 'Status'] = 'Done'
-                        conn.update(worksheet="Sheet1", data=df)
-                        st.success(f"{len(selected_indices)}건 처리 완료!"); st.rerun()
+                        conn.update(worksheet="Sheet1", data=df); st.rerun()
                     else:
                         st.warning("선택된 항목이 없습니다.")
-            with s2: st.write("### 합계")
-            with s3: st.write(f"### :blue[{int(view_df['Amount_KRW'].sum()):,} 원]")
+            
+            with act2:
+                # [일괄 삭제 버튼 추가]
+                if st.button(f"🗑️ {len(selected_indices)}건 일괄 삭제", use_container_width=True):
+                    if selected_indices:
+                        df = df.drop(selected_indices)
+                        conn.update(worksheet="Sheet1", data=df); st.success("삭제 완료!"); st.rerun()
+                    else:
+                        st.warning("선택된 항목이 없습니다.")
+            
+            with act3:
+                st.write(f"### 합계: :blue[{int(view_df['Amount_KRW'].sum()):,} 원]")
         else:
             st.info("조건에 맞는 내역이 없습니다.")
 
     with tab2:
-        # [히스토리 탭 - 이전 로직 유지]
+        # [히스토리 탭]
         st.subheader("🔎 히스토리 상세 수정")
         h_search = st.text_input("거래처 키워드 검색 (히스토리)", key="hist_search")
         h_df = df.copy()
